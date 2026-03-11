@@ -1,0 +1,271 @@
+// ============================================================
+// MINERVINI SEPA STRATEGY — TradingView Pine Script v5
+// Based on Mark Minervini's SEPA (Specific Entry Point Analysis)
+// Covers: Trend Template, Moving Averages, Volume & Momentum
+// ============================================================
+//@version=5
+indicator("Minervini SEPA Strategy", overlay=true, max_labels_count=500)
+
+// ============================================================
+// INPUTS
+// ============================================================
+
+// --- Moving Averages ---
+ma10_len  = input.int(10,  "MA 10  (curto prazo)",  group="Médias Móveis")
+ma50_len  = input.int(50,  "MA 50  (10 semanas)",   group="Médias Móveis")
+ma150_len = input.int(150, "MA 150 (30 semanas)",   group="Médias Móveis")
+ma200_len = input.int(200, "MA 200 (40 semanas)",   group="Médias Móveis")
+
+show_ma10  = input.bool(true, "Exibir MA 10",  group="Médias Móveis")
+show_ma50  = input.bool(true, "Exibir MA 50",  group="Médias Móveis")
+show_ma150 = input.bool(true, "Exibir MA 150", group="Médias Móveis")
+show_ma200 = input.bool(true, "Exibir MA 200", group="Médias Móveis")
+
+// --- Volume ---
+vol_avg_len      = input.int(50,   "Período Média do Volume",        group="Volume")
+vol_spike_mult   = input.float(1.5,"Multiplicador Spike (breakout)", group="Volume", step=0.1)
+vol_dry_mult     = input.float(0.7,"Multiplicador Volume Seco (VCP)",group="Volume", step=0.1)
+
+// --- SEPA Criteria ---
+pct_from_low     = input.float(25.0, "Mín % acima da mínima 52 semanas",  group="Critérios SEPA", step=1.0)
+pct_from_high    = input.float(25.0, "Máx % abaixo da máxima 52 semanas", group="Critérios SEPA", step=1.0)
+ma200_trend_bars = input.int(20,     "Barras p/ tendência da MA200",       group="Critérios SEPA")
+
+// --- Momentum ---
+rs_length        = input.int(63,  "Período RS Momentum (barras)", group="Momentum")
+rs_benchmark     = input.symbol("SPY", "Benchmark (comparação RS)", group="Momentum")
+
+// --- Sinais ---
+show_breakout    = input.bool(true, "Exibir sinal de Breakout",  group="Sinais")
+show_sepa_label  = input.bool(true, "Exibir label SEPA no gráfico", group="Sinais")
+show_table       = input.bool(true, "Exibir tabela de critérios",   group="Sinais")
+pivot_left       = input.int(10,  "Pivot: barras à esquerda", group="Sinais")
+pivot_right      = input.int(5,   "Pivot: barras à direita",  group="Sinais")
+
+// ============================================================
+// MOVING AVERAGES
+// ============================================================
+ma10  = ta.sma(close, ma10_len)
+ma50  = ta.sma(close, ma50_len)
+ma150 = ta.sma(close, ma150_len)
+ma200 = ta.sma(close, ma200_len)
+
+plot(show_ma10  ? ma10  : na, "MA 10",  color=color.new(color.white,  0), linewidth=1)
+plot(show_ma50  ? ma50  : na, "MA 50",  color=color.new(color.blue,   0), linewidth=2)
+plot(show_ma150 ? ma150 : na, "MA 150", color=color.new(color.orange, 0), linewidth=2)
+plot(show_ma200 ? ma200 : na, "MA 200", color=color.new(color.red,    0), linewidth=2)
+
+// ============================================================
+// VOLUME ANALYSIS
+// ============================================================
+vol_avg   = ta.sma(volume, vol_avg_len)
+vol_spike = volume >= vol_avg * vol_spike_mult   // Volume de breakout
+vol_dry   = volume <= vol_avg * vol_dry_mult     // Volume seco (base/consolidação)
+
+// Colore as barras de volume via plotchar no pane separado de volume
+// (TradingView colorirá as velas aqui)
+barcolor(vol_spike ? color.new(color.lime, 0) : na)
+
+// ============================================================
+// 52 SEMANAS — HIGH / LOW
+// ============================================================
+w52_high = ta.highest(high, 252)
+w52_low  = ta.lowest(low,  252)
+
+pct_above_low  = (close - w52_low)  / w52_low  * 100
+pct_below_high = (w52_high - close) / w52_high * 100
+
+// ============================================================
+// RELATIVE STRENGTH MOMENTUM
+// Compara retorno do ativo vs benchmark no período rs_length
+// ============================================================
+bench_close  = request.security(rs_benchmark, timeframe.period, close)
+rs_asset     = (close       / close[rs_length]       - 1) * 100
+rs_bench     = (bench_close / bench_close[rs_length] - 1) * 100
+rs_line      = rs_asset - rs_bench   // RS relativa: positivo = outperforming
+
+// ============================================================
+// VCP — VOLATILITY CONTRACTION PATTERN (aproximação)
+// Compressão progressiva de ATR = ativo em base saudável
+// ============================================================
+atr14       = ta.atr(14)
+atr_avg     = ta.sma(atr14, 50)
+vcp_contraction = atr14 < atr_avg * 0.75  // ATR comprimido vs histórico
+
+// ============================================================
+// SEPA TREND TEMPLATE — 8 CRITÉRIOS DE MINERVINI
+// ============================================================
+
+// C1: Preço acima da MA50
+c1 = close > ma50
+// C2: Preço acima da MA150
+c2 = close > ma150
+// C3: Preço acima da MA200
+c3 = close > ma200
+// C4: MA50 acima da MA150
+c4 = ma50 > ma150
+// C5: MA150 acima da MA200
+c5 = ma150 > ma200
+// C6: MA200 em tendência de alta (slope positivo)
+c6 = ma200 > ma200[ma200_trend_bars]
+// C7: Preço pelo menos 25% acima da mínima de 52 semanas
+c7 = pct_above_low >= pct_from_low
+// C8: Preço dentro de 25% da máxima de 52 semanas
+c8 = pct_below_high <= pct_from_high
+
+// Score total (0-8)
+sepa_score = (c1 ? 1 : 0) + (c2 ? 1 : 0) + (c3 ? 1 : 0) + (c4 ? 1 : 0) +
+             (c5 ? 1 : 0) + (c6 ? 1 : 0) + (c7 ? 1 : 0) + (c8 ? 1 : 0)
+
+// Template completo = todos os 8 critérios
+sepa_full = sepa_score == 8
+
+// ============================================================
+// BREAKOUT SIGNAL
+// Condições: preço rompe pivot de alta + volume acima da média
+//            + SEPA ativo (mín. 7/8 critérios)
+// ============================================================
+pivot_h = ta.pivothigh(high, pivot_left, pivot_right)
+
+// Última resistência confirmada
+var float last_resistance = na
+if not na(pivot_h)
+    last_resistance := pivot_h[pivot_right]
+
+breakout_signal = not na(last_resistance)            and
+                  ta.crossover(close, last_resistance) and
+                  vol_spike                            and
+                  sepa_score >= 7
+
+plotshape(show_breakout and breakout_signal,
+          title     = "Breakout SEPA",
+          style     = shape.triangleup,
+          location  = location.belowbar,
+          color     = color.new(color.lime, 0),
+          size      = size.normal,
+          text      = "BREAK\n▲",
+          textcolor = color.new(color.lime, 0))
+
+// ============================================================
+// BACKGROUND — destaque de zonas SEPA
+// ============================================================
+bg_color = sepa_full         ? color.new(color.green,  93) :
+           sepa_score >= 6   ? color.new(color.yellow, 95) :
+           na
+bgcolor(bg_color, title="SEPA Background")
+
+// ============================================================
+// LABEL NO GRÁFICO — aparece na última barra
+// ============================================================
+if show_sepa_label and barstate.islast
+    lbl_color = sepa_full       ? color.new(color.green, 10) :
+                sepa_score >= 6 ? color.new(color.orange, 10) :
+                                  color.new(color.red, 10)
+
+    lbl_txt = "▶ SEPA Score: " + str.tostring(sepa_score) + "/8\n" +
+              (c1 ? "✔" : "✖") + " Preço > MA50\n"        +
+              (c2 ? "✔" : "✖") + " Preço > MA150\n"       +
+              (c3 ? "✔" : "✖") + " Preço > MA200\n"       +
+              (c4 ? "✔" : "✖") + " MA50 > MA150\n"        +
+              (c5 ? "✔" : "✖") + " MA150 > MA200\n"       +
+              (c6 ? "✔" : "✖") + " MA200 subindo\n"       +
+              (c7 ? "✔" : "✖") + " ≥" + str.tostring(pct_from_low,"#.0") + "% acima mín.52s\n" +
+              (c8 ? "✔" : "✖") + " ≤" + str.tostring(pct_from_high,"#.0") + "% abaixo máx.52s"
+
+    label.new(bar_index + 3, high,
+              lbl_txt,
+              color     = lbl_color,
+              textcolor = color.white,
+              style     = label.style_label_left,
+              size      = size.normal)
+
+// ============================================================
+// TABELA COMPLETA — canto superior direito
+// ============================================================
+var table tbl = table.new(position.top_right, 2, 15,
+                          border_color  = color.new(color.gray, 50),
+                          border_width  = 1,
+                          frame_color   = color.new(color.gray, 30),
+                          frame_width   = 2)
+
+HDR_BG   = color.new(color.navy,  20)
+ROW_BG   = color.new(color.black, 40)
+OK_COLOR = color.new(color.lime,   0)
+NO_COLOR = color.new(color.red,    0)
+TXT_COL  = color.white
+
+if show_table and barstate.islast
+    // Cabeçalho
+    table.cell(tbl, 0, 0, "Critério Minervini / SEPA",
+               bgcolor=HDR_BG, text_color=TXT_COL, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 0, "Status",
+               bgcolor=HDR_BG, text_color=TXT_COL, text_size=size.small, text_halign=text.align_center)
+
+    // Linha de score
+    score_bg = sepa_full ? color.new(color.green,30) : sepa_score>=6 ? color.new(color.orange,30) : color.new(color.red,30)
+    table.cell(tbl, 0, 1, "SEPA SCORE",
+               bgcolor=score_bg, text_color=TXT_COL, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, str.tostring(sepa_score) + " / 8",
+               bgcolor=score_bg, text_color=TXT_COL, text_size=size.small, text_halign=text.align_center)
+
+    // 8 critérios do Trend Template
+    criteria_labels = array.from(
+         "C1 – Preço > MA50",
+         "C2 – Preço > MA150",
+         "C3 – Preço > MA200",
+         "C4 – MA50 > MA150",
+         "C5 – MA150 > MA200",
+         "C6 – MA200 em alta",
+         "C7 – ≥25% acima mín.52s",
+         "C8 – ≤25% abaixo máx.52s")
+    criteria_vals = array.from(c1, c2, c3, c4, c5, c6, c7, c8)
+
+    for i = 0 to 7
+        ok = array.get(criteria_vals, i)
+        table.cell(tbl, 0, i + 2, array.get(criteria_labels, i),
+                   bgcolor=ROW_BG, text_color=TXT_COL, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(tbl, 1, i + 2, ok ? "✔" : "✖",
+                   bgcolor=ROW_BG, text_color=ok ? OK_COLOR : NO_COLOR,
+                   text_size=size.small, text_halign=text.align_center)
+
+    // Separador Volume / Momentum
+    table.cell(tbl, 0, 10, "──── Volume & Momentum ────",
+               bgcolor=HDR_BG, text_color=color.new(color.silver,0), text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 10, "",
+               bgcolor=HDR_BG)
+
+    // Volume Spike
+    table.cell(tbl, 0, 11, "Volume Spike (≥" + str.tostring(vol_spike_mult,"#.1") + "x média)",
+               bgcolor=ROW_BG, text_color=TXT_COL, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 11, vol_spike ? "✔" : "✖",
+               bgcolor=ROW_BG, text_color=vol_spike ? OK_COLOR : color.new(color.gray,0),
+               text_size=size.small, text_halign=text.align_center)
+
+    // Volume Seco (VCP)
+    table.cell(tbl, 0, 12, "Volume Seco / Base (VCP)",
+               bgcolor=ROW_BG, text_color=TXT_COL, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 12, vol_dry ? "✔" : "✖",
+               bgcolor=ROW_BG, text_color=vol_dry ? OK_COLOR : color.new(color.gray,0),
+               text_size=size.small, text_halign=text.align_center)
+
+    // ATR Contração (VCP)
+    table.cell(tbl, 0, 13, "ATR Contração (VCP)",
+               bgcolor=ROW_BG, text_color=TXT_COL, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 13, vcp_contraction ? "✔" : "✖",
+               bgcolor=ROW_BG, text_color=vcp_contraction ? OK_COLOR : color.new(color.gray,0),
+               text_size=size.small, text_halign=text.align_center)
+
+    // RS vs Benchmark
+    rs_ok = rs_line > 0
+    table.cell(tbl, 0, 14, "RS vs " + rs_benchmark + " (" + str.tostring(rs_line, "#.1") + "%)",
+               bgcolor=ROW_BG, text_color=TXT_COL, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(tbl, 1, 14, rs_ok ? "✔" : "✖",
+               bgcolor=ROW_BG, text_color=rs_ok ? OK_COLOR : NO_COLOR,
+               text_size=size.small, text_halign=text.align_center)
+
+// ============================================================
+// ALERTA
+// ============================================================
+alertcondition(breakout_signal,
+               title   = "Minervini SEPA Breakout",
+               message = "Breakout SEPA detectado! Score {{plot_0}} — Volume spike confirmado.")
