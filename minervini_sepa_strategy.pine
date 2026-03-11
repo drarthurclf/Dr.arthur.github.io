@@ -1,9 +1,9 @@
 // ============================================================
-// MINERVINI SEPA STRATEGY — TradingView Pine Script v5
+// MINERVINI SEPA STRATEGY — TradingView Pine Script v6
 // Based on Mark Minervini's SEPA (Specific Entry Point Analysis)
 // Covers: Trend Template, Moving Averages, Volume & Momentum
 // ============================================================
-//@version=5
+//@version=6
 indicator("Minervini SEPA Strategy", overlay=true, max_labels_count=500)
 
 // ============================================================
